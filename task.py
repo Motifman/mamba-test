@@ -16,7 +16,7 @@ def make_randomcopy_dataset(
     y_data = np.zeros([dataset_size, T], dtype="int64")
     flag_pos_start = flag_pos + 1
     indices = np.arange(len_sequence) + flag_pos_start[:, np.newaxis]
-    rows = np.arange(64)[:, None]
+    rows = np.arange(dataset_size)[:, None]
     y_data[rows, indices] = x_data[:, :len_sequence]
 
     x_data_onehot = np.eye(vocab_size + 2)[x_data]
