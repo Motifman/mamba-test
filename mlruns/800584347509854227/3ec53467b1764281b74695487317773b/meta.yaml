@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/minagawa/Research/mamba-test/mlruns/800584347509854227/3ec53467b1764281b74695487317773b/artifacts
+end_time: 1712738704476
+entry_point_name: ''
+experiment_id: '800584347509854227'
+lifecycle_stage: active
+run_id: 3ec53467b1764281b74695487317773b
+run_name: mamba_04092060-c7b2-45b2-a29c-1a7e2f71351c
+run_uuid: 3ec53467b1764281b74695487317773b
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1712738703285
+status: 4
+tags: []
+user_id: minagawa

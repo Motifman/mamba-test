@@ -1,0 +1,33 @@
+expname: mamba
+
+model:
+  input_size: 16
+  d_model: 64
+  n_layers: 2
+
+task:
+  name: randomcopy
+  T: 4096
+  vocab_size: 16
+  len_sequence: 16
+
+data:
+  n_train: 60000
+  n_eval: 10000
+  batch_size: 64
+
+train:
+  grad_steps: 1000000
+  log_interval: 1000
+
+optim:
+  name: adam
+  lr: 1e-4
+  eps: 1e-7
+  use_amp: False
+
+seed:
+  data: 1234
+  train: 9999
+
+device_id: cuda:1

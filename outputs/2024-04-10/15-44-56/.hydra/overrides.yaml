@@ -1,0 +1,3 @@
+- data.n_train=64
+- data.n_eval=64
+- train.grad_steps=1

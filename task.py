@@ -5,24 +5,25 @@ import torch
 def make_randomcopy_dataset(
     dataset_size, T: int = 500, len_sequence: int = 10, vocab_size: int = 8
 ):
-    x_data = np.zeros([dataset_size, T], dtype="int64")
+    assert T >= 2 * len_sequence + 1, "T > 2 * len_sequence"
+    flag_pos = np.random.randint(
+        low=int(T / 2), high=T - len_sequence - 1, size=[dataset_size], dtype="int64"
+    )  # (B)
+    x_data = np.eye(T, dtype="int64")[flag_pos] * (vocab_size + 1)  # (B)->One-hot(B, T)
     x_data[:, :len_sequence] = np.random.randint(
-        low=1, high=vocab_size + 1, size=dataset_size
+        low=1, high=vocab_size + 1, size=[dataset_size, len_sequence]
     )
     y_data = np.zeros([dataset_size, T], dtype="int64")
-
-    flag_position = np.random.randint(int(T / 2), T, size=dataset_size)
-    x_data[:, flag_position] = vocab_size + 1
-    y_data[:, flag_position + 1 + flag_position + 1 + len_sequence] = x_data[
-        :, :len_sequence
-    ]
+    flag_pos_start = flag_pos + 1
+    indices = np.arange(len_sequence) + flag_pos_start[:, np.newaxis]
+    rows = np.arange(64)[:, None]
+    y_data[rows, indices] = x_data[:, :len_sequence]
 
     x_data_onehot = np.eye(vocab_size + 2)[x_data]
     x_data_onehot_tensor = torch.from_numpy(x_data_onehot).float()
-    y_data_onehot = np.eye(vocab_size + 2)[y_data]
-    y_data_onehot_tensor = torch.from_numpy(y_data_onehot).float()
+    y_data_tensor = torch.from_numpy(y_data).long()
 
-    return x_data_onehot_tensor, y_data_onehot_tensor
+    return x_data_onehot_tensor, y_data_tensor
 
 
 class RandomCopyTaskSampler:
