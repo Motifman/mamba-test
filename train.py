@@ -8,7 +8,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import uuid
 from tqdm import tqdm
-from task import make_randomcopy_dataset
+from task import make_randomcopy_dataset, make_selectivecopy_dataset
 from utils import (
     make_datasets,
     set_seed,
@@ -38,6 +38,26 @@ def plot_metrics(metrics, path1, path2):
     plt.ylabel("accuracy")
     plt.savefig(path2)
     return fig1, fig2
+
+
+def make_datatensor(task_name, n_train, n_eval, T, len_sequence, vocab_size):
+    if task_name == "randomcopy":
+        x_train_tensor, y_train_tensor = make_randomcopy_dataset(
+            n_train, T, len_sequence, vocab_size
+        )
+        x_eval_tensor, y_eval_tensor = make_randomcopy_dataset(
+            n_eval, T, len_sequence, vocab_size
+        )
+    elif task_name == "selectivecopy":
+        x_train_tensor, y_train_tensor = make_selectivecopy_dataset(
+            n_train, T, len_sequence, vocab_size
+        )
+        x_eval_tensor, y_eval_tensor = make_selectivecopy_dataset(
+            n_eval, T, len_sequence, vocab_size
+        )
+    else:
+        raise ValueError("You must choose randomcopy or selectivecopy")
+    return x_train_tensor, y_train_tensor, x_eval_tensor, y_eval_tensor
 
 
 def evaluate_best_model(model, train_loader, eval_loader, criterion, device):
@@ -106,11 +126,13 @@ def main(cfg: DictConfig):
 
         # dataset
         set_seed(cfg.seed.data)
-        x_train_tensor, y_train_tensor = make_randomcopy_dataset(
-            cfg.data.n_train, cfg.task.T, cfg.task.len_sequence, cfg.task.vocab_size - 2
-        )
-        x_eval_tensor, y_eval_tensor = make_randomcopy_dataset(
-            cfg.data.n_eval, cfg.task.T, cfg.task.len_sequence, cfg.task.vocab_size - 2
+        x_train_tensor, y_train_tensor, x_eval_tensor, y_eval_tensor = make_datatensor(
+            cfg.task.name,
+            cfg.data.n_train,
+            cfg.data.n_eval,
+            cfg.task.T,
+            cfg.task.len_sequence,
+            cfg.task.vocab_size - 2,
         )
         train_sets = make_datasets(x_train_tensor, y_train_tensor)
         eval_sets = make_datasets(x_eval_tensor, y_eval_tensor)
@@ -122,7 +144,9 @@ def main(cfg: DictConfig):
         # model, optimiezer, criterion, EarlyStopping
         set_seed(cfg.seed.train)
 
-        assert cfg.model.input_size == cfg.task.vocab_size, "plz d_model == vocab_size"
+        # assert (
+        #     cfg.model.input_size == cfg.task.vocab_size
+        # ), "plz d_model == vocab_size"
         model = MambaClassification(
             cfg.model.input_size,
             cfg.model.d_model,
@@ -130,6 +154,7 @@ def main(cfg: DictConfig):
             cfg.task.vocab_size,
         ).to(device)
         n_param = num_params(model.parameters())
+        print(f"paramters = {n_param}")
         mlflow.log_param("n_parameter", n_param)
         optimiezer = Optimizer(
             model.parameters(),

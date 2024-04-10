@@ -4,7 +4,7 @@ import torch.nn as nn
 
 class MambaClassification(nn.Module):
     """
-    各時刻でクラス分類をするmamba
+    classification mamba model
     """
 
     def __init__(self, input_size: int, d_model: int, n_layers: int, num_classes: int):

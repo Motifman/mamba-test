@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from tqdm import main
 
 
 def make_randomcopy_dataset(
@@ -70,3 +71,33 @@ class RandomCopyTaskSampler:
         )
         batch_mean_acc = torch.mean(torch.sum(acc_seq, dim=1) / self.len_string)
         return batch_mean_acc
+
+
+def make_selectivecopy_dataset(
+    dataset_size, T: int = 500, len_sequence: int = 10, vocab_size: int = 8
+):
+    x_data = np.zeros([dataset_size, T], dtype="int64")
+    y_data = np.zeros([dataset_size, T], dtype="int64")
+    available_indices = np.arange(T - 10, dtype="int64")
+    replacement = np.random.randint(
+        1, vocab_size + 1, size=[dataset_size, len_sequence], dtype="int64"
+    )
+
+    for i in range(dataset_size):
+        random_index = np.random.choice(
+            available_indices, size=[len_sequence], replace=False
+        )
+        random_index = np.sort(random_index)  # indexはソートしておく
+        x_data[i, random_index] = replacement[i]
+        y_data[i, -len_sequence:] = replacement[i]
+
+    x_batch_one_hot = np.eye(vocab_size + 2)[x_data]
+    x_batch_one_hot_tensor = torch.from_numpy(x_batch_one_hot).float()
+    y_batch_tensor = torch.from_numpy(y_data).long()
+
+    return x_batch_one_hot_tensor, y_batch_tensor
+
+
+if __name__ == "__main__":
+    x_batch, y_batch = make_selectivecopy_dataset(10, 20, 5, 8)
+    print(y_batch)
