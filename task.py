@@ -120,7 +120,6 @@ def make_statetransition_dataset(
     # random index
     for i in range(T // block_T):
         x_data[:, i * block_T] = np.random.randint(1, 3, size=[dataset_size])
-        print(x_data[:, i * block_T])
         available_indices = np.arange(
             i * block_T + 1, i * block_T + block_T, dtype="int64"
         )
@@ -153,6 +152,7 @@ def make_statetransition_dataset(
 
 
 if __name__ == "__main__":
+    # test
     x_batch, y_batch = make_selectivecopy_dataset(10, 20, 5, 8)
     x_batch, y_batch = make_statetransition_dataset(2, 100, 10, 3, 13)
     print(x_batch.shape, y_batch.shape)
