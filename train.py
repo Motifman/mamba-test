@@ -68,13 +68,13 @@ def evaluate_best_model(model, train_loader, eval_loader, criterion, device):
     len_train = len(train_loader)
     len_eval = len(eval_loader)
 
-    for inputs, labels in train_loader:
+    for inputs, labels in tqdm(train_loader):
         inputs, labels = inputs.to(device), labels.to(device)
         outputs = model(inputs)
         sum_train_loss += criterion(outputs.transpose(2, 1), labels)
         sum_train_acc += accuracy(outputs, labels)
 
-    for inputs, labels in eval_loader:
+    for inputs, labels in tqdm(eval_loader):
         inputs, labels = inputs.to(device), labels.to(device)
         outputs = model(inputs)
         sum_eval_loss += criterion(outputs.transpose(2, 1), labels)
@@ -153,9 +153,15 @@ def main(cfg: DictConfig):
             cfg.model.n_layers,
             cfg.task.vocab_size,
         ).to(device)
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        if cfg.checkpoint_model is not None:
+            path = script_dir + f"/{cfg.log_dir}/{cfg.checkpoint_model}"
+            model.load_state_dict(torch.load(path))
+
         n_param = num_params(model.parameters())
         print(f"paramters = {n_param}")
         mlflow.log_param("n_parameter", n_param)
+
         optimiezer = Optimizer(
             model.parameters(),
             cfg.optim.lr,
@@ -164,9 +170,8 @@ def main(cfg: DictConfig):
             use_amp=cfg.optim.use_amp,
         )
         criterion = nn.CrossEntropyLoss()
-        script_dir = os.path.dirname(os.path.realpath(__file__))
         earlystopping = EarlyStopping(
-            patience=10, verbose=False, path=script_dir + "/log/checkpoint_model.pth"
+            patience=5, verbose=False, path=script_dir + "/log/checkpoint_model.pth"
         )
 
         # metrics
@@ -258,18 +263,17 @@ def main(cfg: DictConfig):
                 itr = 0
 
         # log
-        log_dir = "log/"
-        os.makedirs(log_dir, exist_ok=True)
-        path1 = log_dir + "loss.pdf"
-        path2 = log_dir + "acc.pdf"
+        path1 = script_dir + f"/{cfg.log_dir}/loss.pdf"
+        path2 = script_dir + f"/{cfg.log_dir}/acc.pdf"
         fig1, fig2 = plot_metrics(metrics, path1, path2)
-        mlflow.log_figure(fig1, path1)
-        mlflow.log_figure(fig2, path2)
+        mlflow.log_figure(fig1, "loss.pdf")
+        mlflow.log_figure(fig2, "acc.pdf")
 
         # evaluate the best model
-        train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
-            model, train_loader, eval_loader, criterion, device
-        )
+        with torch.no_grad():
+            train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
+                model, train_loader, eval_loader, criterion, device
+            )
         print("evaluate best model")
         print(f"train_loss={train_loss}, train_acc={train_acc}")
         print(f"eval_loss={eval_loss}, eval_acc={eval_acc}")
