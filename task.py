@@ -5,15 +5,15 @@ from tqdm import main
 
 
 def make_randomcopy_dataset(
-    dataset_size, T: int = 500, len_sequence: int = 10, vocab_size: int = 8
+    dataset_size, T: int = 500, len_sequence: int = 10, vocab_size: int = 10
 ):
     assert T >= 2 * len_sequence + 1, "T > 2 * len_sequence"
     flag_pos = np.random.randint(
         low=int(T / 2), high=T - len_sequence - 1, size=[dataset_size], dtype="int64"
     )  # (B)
-    x_data = np.eye(T, dtype="int64")[flag_pos] * (vocab_size + 1)  # (B)->One-hot(B, T)
+    x_data = np.eye(T, dtype="int64")[flag_pos] * (vocab_size - 1)  # (B)->One-hot(B, T)
     x_data[:, :len_sequence] = np.random.randint(
-        low=1, high=vocab_size + 1, size=[dataset_size, len_sequence]
+        low=1, high=vocab_size - 1, size=[dataset_size, len_sequence]
     )
     y_data = np.zeros([dataset_size, T], dtype="int64")
     flag_pos_start = flag_pos + 1
@@ -21,7 +21,7 @@ def make_randomcopy_dataset(
     rows = np.arange(dataset_size)[:, None]
     y_data[rows, indices] = x_data[:, :len_sequence]
 
-    x_data_onehot = np.eye(vocab_size + 2)[x_data]
+    x_data_onehot = np.eye(vocab_size)[x_data]
     x_data_onehot_tensor = torch.from_numpy(x_data_onehot).float()
     y_data_tensor = torch.from_numpy(y_data).long()
 
@@ -75,13 +75,13 @@ class RandomCopyTaskSampler:
 
 
 def make_selectivecopy_dataset(
-    dataset_size: int, T: int = 500, len_sequence: int = 10, vocab_size: int = 8
+    dataset_size: int, T: int = 500, len_sequence: int = 10, vocab_size: int = 10
 ):
     x_data = np.zeros([dataset_size, T], dtype="int64")
     y_data = np.zeros([dataset_size, T], dtype="int64")
     available_indices = np.arange(T - 10, dtype="int64")
     replacement = np.random.randint(
-        1, vocab_size + 1, size=[dataset_size, len_sequence], dtype="int64"
+        1, vocab_size - 1, size=[dataset_size, len_sequence], dtype="int64"
     )
 
     for i in range(dataset_size):
@@ -92,7 +92,7 @@ def make_selectivecopy_dataset(
         x_data[i, random_index] = replacement[i]
         y_data[i, -len_sequence:] = replacement[i]
 
-    x_batch_one_hot = np.eye(vocab_size + 2)[x_data]
+    x_batch_one_hot = np.eye(vocab_size)[x_data]
     x_batch_one_hot_tensor = torch.from_numpy(x_batch_one_hot).float()
     y_batch_tensor = torch.from_numpy(y_data).long()
 
@@ -113,7 +113,6 @@ def make_statetransition_dataset(
     NUM_MAX = NUM_MIN + (vocab_size - 1 - NUM_MIN) // 2
     ALP_MIN = NUM_MAX + 1
     ALP_MAX = ALP_MIN + (vocab_size - 1 - NUM_MIN) // 2
-    print(NUM_MIN, NUM_MAX, ALP_MIN, ALP_MAX)
     x_data = np.zeros([dataset_size, T], dtype="int64")
     y_data = np.zeros([dataset_size, T], dtype="int64")
 
@@ -149,6 +148,24 @@ def make_statetransition_dataset(
     x_batch_one_hot_tensor = torch.from_numpy(x_batch_one_hot).float()
     y_batch_one_hot = torch.from_numpy(y_data).long()
     return x_batch_one_hot_tensor, y_batch_one_hot
+
+
+def make_copy_dataset(
+    dataset_size: int, T: int = 500, len_string: int = 10, vocab_size: int = 10
+):
+    x_data = np.zeros((dataset_size, T), dtype="int64")
+    copy_sequence = np.random.randint(
+        low=1, high=vocab_size - 1, size=(dataset_size, len_string)
+    )
+    x_data[:, :len_string] = copy_sequence
+    x_data[:, -(len_string + 1)] = vocab_size - 1
+    y_data = np.zeros((dataset_size, T), dtype="int64")
+    y_data[:, -len_string:] = x_data[:, :len_string]
+
+    x_batch_one_hot = np.eye(vocab_size)[x_data]
+    x_batch_one_hot_tensor = torch.from_numpy(x_batch_one_hot).float()
+    y_batch_tensor = torch.from_numpy(y_data).long()
+    return x_batch_one_hot_tensor, y_batch_tensor
 
 
 if __name__ == "__main__":

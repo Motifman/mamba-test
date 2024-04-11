@@ -8,12 +8,18 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import uuid
 from tqdm import tqdm
-from task import make_randomcopy_dataset, make_selectivecopy_dataset
+from task import (
+    make_randomcopy_dataset,
+    make_selectivecopy_dataset,
+    make_statetransition_dataset,
+    make_copy_dataset,
+)
 from utils import (
     make_datasets,
     set_seed,
     make_dataloader,
     accuracy,
+    accuracy_rc,
     Optimizer,
     num_params,
     EarlyStopping,
@@ -40,7 +46,7 @@ def plot_metrics(metrics, path1, path2):
     return fig1, fig2
 
 
-def make_datatensor(task_name, n_train, n_eval, T, len_sequence, vocab_size):
+def make_datatensor(task_name, n_train, n_eval, T, block_T, len_sequence, vocab_size):
     if task_name == "randomcopy":
         x_train_tensor, y_train_tensor = make_randomcopy_dataset(
             n_train, T, len_sequence, vocab_size
@@ -55,12 +61,28 @@ def make_datatensor(task_name, n_train, n_eval, T, len_sequence, vocab_size):
         x_eval_tensor, y_eval_tensor = make_selectivecopy_dataset(
             n_eval, T, len_sequence, vocab_size
         )
+    elif task_name == "statetransition":
+        x_train_tensor, y_train_tensor = make_statetransition_dataset(
+            n_train, T, block_T, len_sequence, vocab_size
+        )
+        x_eval_tensor, y_eval_tensor = make_statetransition_dataset(
+            n_train, T, block_T, len_sequence, vocab_size
+        )
+    elif task_name == "copy":
+        x_train_tensor, y_train_tensor = make_copy_dataset(
+            n_train, T, len_sequence, vocab_size
+        )
+        x_eval_tensor, y_eval_tensor = make_copy_dataset(
+            n_eval, T, len_sequence, vocab_size
+        )
     else:
-        raise ValueError("You must choose randomcopy or selectivecopy")
+        raise ValueError(
+            "You must choose randomcopy or selectivecopy or statetransition"
+        )
     return x_train_tensor, y_train_tensor, x_eval_tensor, y_eval_tensor
 
 
-def evaluate_best_model(model, train_loader, eval_loader, criterion, device):
+def evaluate_best_model(model, train_loader, eval_loader, criterion, device, accuracy):
     sum_train_loss = 0
     sum_train_acc = 0
     sum_eval_loss = 0
@@ -95,11 +117,11 @@ def main(cfg: DictConfig):
     print("=================config.yaml===================")
     print(cfg)
 
-    config_dict = OmegaConf.to_container(cfg, resolve=True)
+    # config_dict = OmegaConf.to_container(cfg, resolve=True)
     run_name = "mamba_" + str(uuid.uuid4())
 
     with mlflow.start_run(run_name=run_name):
-        mlflow.log_param("config", config_dict)
+        # mlflow.log_param("config", config_dict)
         mlflow.log_param("d_model", cfg.model.d_model)
         mlflow.log_param("n_layers", cfg.model.n_layers)
         mlflow.log_param("task_name", cfg.task.name)
@@ -118,6 +140,8 @@ def main(cfg: DictConfig):
         mlflow.log_param("seed_data", cfg.seed.data)
         mlflow.log_param("seed_train", cfg.seed.train)
         mlflow.log_param("device_id", cfg.device_id)
+        mlflow.log_param("eval_only", cfg.eval_only)
+        mlflow.log_param("param_count_only", cfg.param_count_only)
 
         device = torch.device(
             f"{cfg.device_id}" if torch.cuda.is_available() else r"cpu"
@@ -131,8 +155,9 @@ def main(cfg: DictConfig):
             cfg.data.n_train,
             cfg.data.n_eval,
             cfg.task.T,
+            cfg.task.block_T,
             cfg.task.len_sequence,
-            cfg.task.vocab_size - 2,
+            cfg.task.vocab_size,
         )
         train_sets = make_datasets(x_train_tensor, y_train_tensor)
         eval_sets = make_datasets(x_eval_tensor, y_eval_tensor)
@@ -144,9 +169,6 @@ def main(cfg: DictConfig):
         # model, optimiezer, criterion, EarlyStopping
         set_seed(cfg.seed.train)
 
-        # assert (
-        #     cfg.model.input_size == cfg.task.vocab_size
-        # ), "plz d_model == vocab_size"
         model = MambaClassification(
             cfg.model.input_size,
             cfg.model.d_model,
@@ -158,9 +180,11 @@ def main(cfg: DictConfig):
             path = script_dir + f"/{cfg.log_dir}/{cfg.checkpoint_model}"
             model.load_state_dict(torch.load(path))
 
-        n_param = num_params(model.parameters())
-        print(f"paramters = {n_param}")
-        mlflow.log_param("n_parameter", n_param)
+        if cfg.param_count_only:
+            n_param = num_params(model.parameters())
+            print(f"paramters = {n_param}")
+            mlflow.log_param("n_parameter", n_param)
+            quit()
 
         optimiezer = Optimizer(
             model.parameters(),
@@ -171,7 +195,9 @@ def main(cfg: DictConfig):
         )
         criterion = nn.CrossEntropyLoss()
         earlystopping = EarlyStopping(
-            patience=5, verbose=False, path=script_dir + "/log/checkpoint_model.pth"
+            patience=10,
+            verbose=False,
+            path=script_dir + f"/log/{run_name}_checkpoint_model.pth",
         )
 
         # metrics
@@ -183,6 +209,21 @@ def main(cfg: DictConfig):
             "eval_acc": [],
         }
 
+        # eval_only
+        if cfg.eval_only:
+            with torch.no_grad():
+                train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
+                    model, train_loader, eval_loader, criterion, device
+                )
+            print("evaluate best model")
+            print(f"best_train_loss={train_loss}, best_train_acc={train_acc}")
+            print(f"best_eval_loss={eval_loss}, best_eval_acc={eval_acc}")
+            mlflow.log_metric("best_train_loss", train_loss)
+            mlflow.log_metric("best_train_acc", train_acc)
+            mlflow.log_metric("best_eval_loss", eval_loss)
+            mlflow.log_metric("best_eval_acc", eval_acc)
+            quit()
+
         # train loop
         sum_train_loss = 0
         sum_train_acc = 0
@@ -191,6 +232,12 @@ def main(cfg: DictConfig):
         GRAD_STEPS = cfg.train.grad_steps
         LOG_INTERVAL = cfg.train.log_interval
         itr = 0
+        # f_accuracy = (
+        #     lambda outputs, targets: accuracy_rc(outputs, targets)
+        #     if cfg.task.name == "randomcopy"
+        #     else accuracy(outputs, targets)
+        # )
+        f_accuracy = lambda outputs, targets: accuracy_rc(outputs, targets)
         for step in tqdm(range(GRAD_STEPS)):
             # train
             model.train()
@@ -204,7 +251,7 @@ def main(cfg: DictConfig):
             outputs = model(inputs)
             loss = criterion(outputs.transpose(1, 2), labels)  # (B, T, C)->(B, C, T)
             optimiezer(loss)
-            train_acc = accuracy(outputs, labels)
+            train_acc = f_accuracy(outputs, labels)
             sum_train_loss += loss.item()
             sum_train_acc += train_acc.item()
 
@@ -220,7 +267,7 @@ def main(cfg: DictConfig):
                 inputs, labels = inputs.to(device), labels.to(device)
                 outputs = model(inputs)
                 loss = criterion(outputs.transpose(1, 2), labels)
-                eval_acc = accuracy(outputs, labels)
+                eval_acc = f_accuracy(outputs, labels)
                 sum_eval_loss += loss.item()
                 sum_eval_acc += eval_acc.item()
 
@@ -272,15 +319,15 @@ def main(cfg: DictConfig):
         # evaluate the best model
         with torch.no_grad():
             train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
-                model, train_loader, eval_loader, criterion, device
+                model, train_loader, eval_loader, criterion, device, f_accuracy
             )
         print("evaluate best model")
-        print(f"train_loss={train_loss}, train_acc={train_acc}")
-        print(f"eval_loss={eval_loss}, eval_acc={eval_acc}")
-        mlflow.log_metric("train_loss", train_loss)
-        mlflow.log_metric("train_acc", train_acc)
-        mlflow.log_metric("eval_loss", eval_loss)
-        mlflow.log_metric("eval_acc", eval_acc)
+        print(f"best_train_loss={train_loss}, best_train_acc={train_acc}")
+        print(f"best_eval_loss={eval_loss}, best_eval_acc={eval_acc}")
+        mlflow.log_metric("best_train_loss", train_loss)
+        mlflow.log_metric("best_train_acc", train_acc)
+        mlflow.log_metric("best_eval_loss", eval_loss)
+        mlflow.log_metric("best_eval_acc", eval_acc)
 
 
 if __name__ == "__main__":

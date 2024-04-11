@@ -27,6 +27,15 @@ def accuracy(outputs, targets):
     return (outputs == targets).float().mean()
 
 
+def accuracy_rc(outputs, targets):
+    # outputs: (B, T, D)
+    # targets: (B, T)
+    outputs = torch.argmax(outputs, dim=2)  # (B, T)
+    condition = (targets > 0) & (outputs == targets)
+    sum_targets = (targets > 0).float().sum()
+    return condition.float().sum() / sum_targets
+
+
 class Optimizer:
     def __init__(
         self,

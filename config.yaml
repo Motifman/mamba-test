@@ -8,6 +8,7 @@ model:
 task:
   name: randomcopy
   T: 4096
+  block_T: null
   vocab_size: 16
   len_sequence: 16
 
@@ -33,4 +34,9 @@ seed:
 device_id: cuda:1
 
 log_dir: log
+
 checkpoint_model: null
+
+eval_only: false
+
+param_count_only: false
