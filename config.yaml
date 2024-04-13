@@ -1,9 +1,11 @@
 expname: mamba
 
 model:
+  name: mamba
   input_size: 16
   d_model: 64
   n_layers: 2
+  parallel: true
 
 task:
   name: randomcopy
@@ -20,12 +22,14 @@ data:
 train:
   grad_steps: 1000
   log_interval: 1000
+  patience: 10
 
 optim:
   name: adam
   lr: 1e-4
-  eps: 1e-7
+  eps: 1e-8
   use_amp: False
+  clip: null
 
 seed:
   data: 1234

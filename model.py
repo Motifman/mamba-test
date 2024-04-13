@@ -1,5 +1,6 @@
 from mamba_py.mamba import MambaConfig, Mamba
 import torch.nn as nn
+from mem import AttentionRedFB, AttnNoNormLMSTM
 
 
 class MambaClassification(nn.Module):
@@ -21,3 +22,53 @@ class MambaClassification(nn.Module):
         x = self.mamba(x)
         y = self.class_head(x)
         return y
+
+
+class TransformerClassification(nn.Module):
+    def __init__(self, input_size: int, d_model: int, n_layers: int, num_classes: int):
+        super().__init__()
+        self.in_head = nn.Linear(input_size, d_model)
+        encoder = nn.TransformerEncoderLayer(
+            d_model,
+            nhead=4,
+            dim_feedforward=2 * d_model,
+            activation="gelu",
+            batch_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder, num_layers=n_layers)
+        self.class_head = nn.Linear(d_model, num_classes)
+
+    def forward(self, x):
+        x = self.in_head(x)
+        x = self.transformer(x)
+        y = self.class_head(x)
+        return y
+
+
+def make_model(
+    model_name: str,
+    input_size: int,
+    d_model: int,
+    n_layers: int,
+    num_classes: int,
+    parallel: bool,
+):
+    if model_name == "mamba":
+        model = MambaClassification(input_size, d_model, n_layers, num_classes)
+    elif model_name == "transformer":
+        model = TransformerClassification(input_size, d_model, n_layers, num_classes)
+    elif model_name == "redfb":
+        model = AttentionRedFB(
+            input_size,
+            d_model,
+            num_classes,
+            num_rnn=6,
+            num_heads=4,
+            nonlinear="relu",
+            parallel=parallel,
+        )
+    elif model_name == "preredfb":
+        model = AttnNoNormLMSTM(input_size, d_model, num_classes, 6, 4, "relu")
+    else:
+        raise ValueError("select mamba or transformer")
+    return model

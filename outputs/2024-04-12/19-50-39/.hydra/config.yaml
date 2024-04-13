@@ -1,0 +1,33 @@
+expname: mamba
+model:
+  name: attentionredfb
+  input_size: 16
+  d_model: 64
+  n_layers: 2
+task:
+  name: randomcopy
+  T: 4096
+  block_T: null
+  vocab_size: 16
+  len_sequence: 16
+data:
+  n_train: 60000
+  n_eval: 10000
+  batch_size: 64
+train:
+  grad_steps: 1000
+  log_interval: 1000
+  patience: 10
+optim:
+  name: adam
+  lr: 0.0001
+  eps: 1.0e-07
+  use_amp: false
+seed:
+  data: 1234
+  train: 9999
+device_id: cuda:1
+log_dir: log
+checkpoint_model: null
+eval_only: false
+param_count_only: true

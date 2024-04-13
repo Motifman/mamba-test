@@ -24,7 +24,7 @@ from utils import (
     num_params,
     EarlyStopping,
 )
-from model import MambaClassification
+from model import make_model
 import matplotlib.pyplot as plt
 import os
 
@@ -66,7 +66,7 @@ def make_datatensor(task_name, n_train, n_eval, T, block_T, len_sequence, vocab_
             n_train, T, block_T, len_sequence, vocab_size
         )
         x_eval_tensor, y_eval_tensor = make_statetransition_dataset(
-            n_train, T, block_T, len_sequence, vocab_size
+            n_eval, T, block_T, len_sequence, vocab_size
         )
     elif task_name == "copy":
         x_train_tensor, y_train_tensor = make_copy_dataset(
@@ -122,8 +122,10 @@ def main(cfg: DictConfig):
 
     with mlflow.start_run(run_name=run_name):
         # mlflow.log_param("config", config_dict)
+        mlflow.log_param("model_name", cfg.model.name)
         mlflow.log_param("d_model", cfg.model.d_model)
         mlflow.log_param("n_layers", cfg.model.n_layers)
+        mlflow.log_param("parallel", cfg.model.parallel)
         mlflow.log_param("task_name", cfg.task.name)
         mlflow.log_param("T", cfg.task.T)
         mlflow.log_param("len_sequence", cfg.task.len_sequence)
@@ -132,7 +134,9 @@ def main(cfg: DictConfig):
         mlflow.log_param("n_eval", cfg.data.n_eval)
         mlflow.log_param("batchsize", cfg.data.batch_size)
         mlflow.log_param("grad_steps", cfg.train.grad_steps)
+        mlflow.log_param("patience", cfg.train.patience)
         mlflow.log_param("log_interval", cfg.train.log_interval)
+        mlflow.log_param("clip", cfg.optim.clip)
         mlflow.log_param("optim", cfg.optim.name)
         mlflow.log_param("lr", cfg.optim.lr)
         mlflow.log_param("use_amp", cfg.optim.use_amp)
@@ -168,12 +172,13 @@ def main(cfg: DictConfig):
 
         # model, optimiezer, criterion, EarlyStopping
         set_seed(cfg.seed.train)
-
-        model = MambaClassification(
+        model = make_model(
+            cfg.model.name,
             cfg.model.input_size,
             cfg.model.d_model,
             cfg.model.n_layers,
-            cfg.task.vocab_size,
+            cfg.task.vocab_size - 1,
+            cfg.model.parallel,
         ).to(device)
         script_dir = os.path.dirname(os.path.realpath(__file__))
         if cfg.checkpoint_model is not None:
@@ -186,16 +191,17 @@ def main(cfg: DictConfig):
             mlflow.log_param("n_parameter", n_param)
             quit()
 
-        optimiezer = Optimizer(
+        optimizer = Optimizer(
             model.parameters(),
             cfg.optim.lr,
             eps=cfg.optim.eps,
             opt=cfg.optim.name,
             use_amp=cfg.optim.use_amp,
+            clip=cfg.optim.clip,
         )
         criterion = nn.CrossEntropyLoss()
         earlystopping = EarlyStopping(
-            patience=10,
+            patience=cfg.train.patience,
             verbose=False,
             path=script_dir + f"/log/{run_name}_checkpoint_model.pth",
         )
@@ -213,7 +219,7 @@ def main(cfg: DictConfig):
         if cfg.eval_only:
             with torch.no_grad():
                 train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
-                    model, train_loader, eval_loader, criterion, device
+                    model, train_loader, eval_loader, criterion, device, accuracy_rc
                 )
             print("evaluate best model")
             print(f"best_train_loss={train_loss}, best_train_acc={train_acc}")
@@ -232,15 +238,10 @@ def main(cfg: DictConfig):
         GRAD_STEPS = cfg.train.grad_steps
         LOG_INTERVAL = cfg.train.log_interval
         itr = 0
-        # f_accuracy = (
-        #     lambda outputs, targets: accuracy_rc(outputs, targets)
-        #     if cfg.task.name == "randomcopy"
-        #     else accuracy(outputs, targets)
-        # )
-        f_accuracy = lambda outputs, targets: accuracy_rc(outputs, targets)
         for step in tqdm(range(GRAD_STEPS)):
             # train
             model.train()
+            model.init_states()
             try:
                 inputs, labels = next(train_loader_iterator)
             except StopIteration:
@@ -250,26 +251,26 @@ def main(cfg: DictConfig):
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
             loss = criterion(outputs.transpose(1, 2), labels)  # (B, T, C)->(B, C, T)
-            optimiezer(loss)
-            train_acc = f_accuracy(outputs, labels)
+            optimizer(loss)
+            train_acc = accuracy_rc(outputs, labels)
             sum_train_loss += loss.item()
             sum_train_acc += train_acc.item()
 
             # eval
-            model.eval()
-            with torch.no_grad():
-                try:
-                    inputs, labels = next(eval_loader_iterator)
-                except StopIteration:
-                    eval_loader_iterator = iter(eval_loader)
-                    inputs, labels = next(eval_loader_iterator)
-
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs.transpose(1, 2), labels)
-                eval_acc = f_accuracy(outputs, labels)
-                sum_eval_loss += loss.item()
-                sum_eval_acc += eval_acc.item()
+            # model.eval()
+            # with torch.no_grad():
+            #     try:
+            #         inputs, labels = next(eval_loader_iterator)
+            #     except StopIteration:
+            #         eval_loader_iterator = iter(eval_loader)
+            #         inputs, labels = next(eval_loader_iterator)
+            #
+            #     inputs, labels = inputs.to(device), labels.to(device)
+            #     outputs = model(inputs)
+            #     loss = criterion(outputs.transpose(1, 2), labels)
+            #     eval_acc = accuracy_rc(outputs, labels)
+            #     sum_eval_loss += loss.item()
+            #     sum_eval_acc += eval_acc.item()
 
             itr += 1
 
@@ -299,9 +300,7 @@ def main(cfg: DictConfig):
                 mlflow.log_metric("eval_acc", eval_acc, step=step)
 
                 earlystopping(eval_loss, model=model)
-                if (
-                    earlystopping.early_stop
-                ):  # ストップフラグがTrueの場合、breakでforループを抜ける
+                if earlystopping.early_stop:
                     print(
                         f"Early Stopping! best eval loss is {earlystopping.best_score}"
                     )
@@ -319,7 +318,7 @@ def main(cfg: DictConfig):
         # evaluate the best model
         with torch.no_grad():
             train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
-                model, train_loader, eval_loader, criterion, device, f_accuracy
+                model, train_loader, eval_loader, criterion, device, accuracy_rc
             )
         print("evaluate best model")
         print(f"best_train_loss={train_loss}, best_train_acc={train_acc}")

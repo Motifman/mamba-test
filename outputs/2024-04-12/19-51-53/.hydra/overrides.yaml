@@ -1,0 +1,3 @@
+- param_count_only=True
+- model.name=redfb
+- model.d_model=40

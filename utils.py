@@ -13,11 +13,11 @@ def make_dataloader(dataset, batch_size: int, shuffle: bool):
 
 def set_seed(seed=123):
     print("set seed numpy and torch")
-    np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.use_deterministic_algorithms = True
+    np.random.seed(seed)
 
 
 def accuracy(outputs, targets):
@@ -37,16 +37,10 @@ def accuracy_rc(outputs, targets):
 
 
 class Optimizer:
-    def __init__(
-        self,
-        parameters,
-        lr,
-        eps=1e-4,
-        opt="adam",
-        use_amp=False,
-    ):
+    def __init__(self, parameters, lr, eps=1e-4, opt="adam", use_amp=False, clip=None):
         self._parameters = parameters
         self._opt = {
+            "rmsprop": lambda: torch.optim.RMSprop(parameters, lr=lr, eps=eps),
             "adam": lambda: torch.optim.Adam(parameters, lr=lr, eps=eps),
             "nadam": lambda: NotImplemented(f"{opt} is not implemented"),
             "adamax": lambda: torch.optim.Adamax(parameters, lr=lr, eps=eps),
@@ -54,16 +48,20 @@ class Optimizer:
             "momentum": lambda: torch.optim.SGD(parameters, lr=lr, momentum=0.9),
         }[opt]()
         self._scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        self._clip = clip
 
     def __call__(self, loss):
         assert len(loss.shape) == 0, loss.shape
         self._opt.zero_grad()
-        self._scaler.scale(loss).backward()
-        self._scaler.unscale_(self._opt)
-        # torch.nn.utils.clip_grad_norm_(params, self._clip)
-        self._scaler.step(self._opt)
-        self._scaler.update()
-        self._opt.zero_grad()
+        loss.backward()
+        # self._scaler.scale(loss).backward()
+        # self._scaler.unscale_(self._opt)
+        if self._clip is not None:
+            torch.nn.utils.clip_grad_norm_(self._parameters, self._clip)
+        # self._scaler.step(self._opt)
+        self._opt.step()
+        # self._scaler.update()
+        # self._opt.zero_grad()
 
 
 def num_params(model_param):
