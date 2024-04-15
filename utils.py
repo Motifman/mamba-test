@@ -8,7 +8,9 @@ def make_datasets(input_tensor, target_tensor):
 
 
 def make_dataloader(dataset, batch_size: int, shuffle: bool):
-    return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle)
+    return DataLoader(
+        dataset=dataset, batch_size=batch_size, shuffle=shuffle, num_workers=2
+    )
 
 
 def set_seed(seed=123):
@@ -54,14 +56,11 @@ class Optimizer:
         assert len(loss.shape) == 0, loss.shape
         self._opt.zero_grad()
         loss.backward()
-        # self._scaler.scale(loss).backward()
-        # self._scaler.unscale_(self._opt)
         if self._clip is not None:
-            torch.nn.utils.clip_grad_norm_(self._parameters, self._clip)
-        # self._scaler.step(self._opt)
+            torch.nn.utils.clip_grad_norm_(
+                self._parameters, max_norm=self._clip, norm_type=2
+            )
         self._opt.step()
-        # self._scaler.update()
-        # self._opt.zero_grad()
 
 
 def num_params(model_param):

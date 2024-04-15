@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch.utils.data import argument_validation
 from tqdm import main
+import torchvision
 
 
 def make_randomcopy_dataset(
@@ -87,15 +88,15 @@ def make_statetransition_dataset(
     T: int = 4000,
     block_T: int = 400,
     len_sequence: int = 10,
-    vocab_size: int = 8,
+    vocab_size: int = 9,
 ):
     assert T % block_T == 0, "T must be devided by block_T"
     assert (vocab_size - 1) % 2 == 0, "vocab_size must be odd number"
     assert vocab_size > 5, "vocab_size must be larger than 5"
     NUM_MIN = 3  # 1 is ? copy_a => copy_b, 2 is ! copy_b => copy_a, 0 is common noise
-    NUM_MAX = NUM_MIN + (vocab_size - 1 - NUM_MIN) // 2
+    NUM_MAX = NUM_MIN + (vocab_size - NUM_MIN) // 2 - 1
     ALP_MIN = NUM_MAX + 1
-    ALP_MAX = ALP_MIN + (vocab_size - 1 - NUM_MIN) // 2
+    ALP_MAX = ALP_MIN + (vocab_size - NUM_MIN) // 2 - 1
     x_data = np.zeros([dataset_size, T], dtype="int64")
     y_data = np.zeros([dataset_size, T], dtype="int64")
 
@@ -115,16 +116,16 @@ def make_statetransition_dataset(
             random_index = np.random.choice(
                 available_indices, size=[2, len_sequence], replace=False
             )
-            random_index = np.sort(random_index, axis=0)
+            random_index = np.sort(random_index, axis=1)
             x_data[j, random_index[0]] = replacement_num[j]
             x_data[j, random_index[1]] = replacement_alp[j]
             if x_data[j, i * block_T] == 1:
                 y_data[j, (i + 1) * block_T - len_sequence : (i + 1) * block_T] = (
-                    replacement_num[j]
+                    replacement_num[j] - 2
                 )
             elif x_data[j, i * block_T] == 2:
                 y_data[j, (i + 1) * block_T - len_sequence : (i + 1) * block_T] = (
-                    replacement_alp[j]
+                    replacement_alp[j] - 2
                 )
 
     x_batch_one_hot = np.eye(vocab_size)[x_data]
@@ -158,7 +159,8 @@ def make_copy_dataset(
     y_data = np.zeros((dataset_size, T), dtype="int64")
     y_data[:, -len_string:] = x_data[:, :len_string]
 
-    x_batch_one_hot = np.eye(vocab_size)[x_data]
+    # x_batch_one_hot = np.eye(vocab_size)[x_data]
+    x_batch_one_hot = (np.arange(x_data.max() + 1) == x_data[..., None]).astype(int)
     x_batch_one_hot_tensor = torch.from_numpy(x_batch_one_hot).float()
     y_batch_tensor = torch.from_numpy(y_data).long()
     return x_batch_one_hot_tensor, y_batch_tensor
@@ -174,10 +176,38 @@ class CopySampler:
         return make_copy_dataset(batch_size, self.T, self.len_sequence, self.vocab_size)
 
 
+# def make_cifar10_dataset(batch_size):
+#     transform = torchvision.transform(
+#         [
+#             torchvision.Grayscale(),
+#             torchvision.ToTensor(),
+#             torchvision.Lambda(lambda x: x.view(-1)),
+#         ]
+#     )
+#     train_sets = torchvision.datasets.CIFAR10(
+#         "./", train=True, download=True, transform=transform
+#     )
+#     eval_sets = torchvision.datasets.CIFAR10(
+#         "./", train=False, download=True, transform=transform
+#     )
+#     train_loader = DataLoader(train_sets, shuffle=True, batch_size=batch_size)
+#     eval_loader = DataLoader(eval_sets, shuffle=False, batch_size=batch_size)
+#     return
+
+
+def output_size_of_task(task_name, vocab_size):
+    if task_name in ["copy", "randomcopy", "selectivecopy"]:
+        return vocab_size - 1
+    elif task_name in ["statetransition"]:
+        return vocab_size - 2
+    else:
+        raise ValueError("choose copy, randomcopy, or selectivecopy")
+
+
 if __name__ == "__main__":
     # test
-    x_batch, y_batch = make_selectivecopy_dataset(10, 20, 5, 8)
-    # x_batch, y_batch = make_statetransition_dataset(2, 100, 10, 3, 13)
+    # x_batch, y_batch = make_selectivecopy_dataset(10, 20, 5, 8)
+    x_batch, y_batch = make_statetransition_dataset(3, 20, 10, 3, 7)
     # x_batch, y_batch = make_copy_dataset(1, 22, 10, 10)
     x_batch = torch.argmax(x_batch, dim=-1)
     print(x_batch[0])

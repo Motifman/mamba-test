@@ -17,6 +17,7 @@ from task import (
     StateTransitionSampler,
     RandomCopyTaskSampler,
     SelectiveCopyTaskSampler,
+    output_size_of_task,
 )
 from utils import (
     make_datasets,
@@ -119,6 +120,7 @@ def main(cfg: DictConfig):
         mlflow.log_param("d_model", cfg.model.d_model)
         mlflow.log_param("n_layers", cfg.model.n_layers)
         mlflow.log_param("parallel", cfg.model.parallel)
+        mlflow.log_param("activation", cfg.model.activation)
         mlflow.log_param("task_name", cfg.task.name)
         mlflow.log_param("T", cfg.task.T)
         mlflow.log_param("len_sequence", cfg.task.len_sequence)
@@ -172,8 +174,9 @@ def main(cfg: DictConfig):
             cfg.model.input_size,
             cfg.model.d_model,
             cfg.model.n_layers,
-            cfg.task.vocab_size - 1,  # TODO
+            output_size_of_task(cfg.task.name, cfg.task.vocab_size),
             cfg.model.parallel,
+            cfg.model.activation,
         ).to(device)
         script_dir = os.path.dirname(os.path.realpath(__file__))
         if cfg.checkpoint_model is not None:
@@ -186,14 +189,15 @@ def main(cfg: DictConfig):
             mlflow.log_param("n_parameter", n_param)
             quit()
 
-        optimiezer = Optimizer(
-            model.parameters(),
-            cfg.optim.lr,
-            eps=cfg.optim.eps,
-            opt=cfg.optim.name,
-            use_amp=cfg.optim.use_amp,
-            clip=cfg.optim.clip,
-        )
+        # optimiezer = Optimizer(
+        #     model.parameters(),
+        #     cfg.optim.lr,
+        #     eps=cfg.optim.eps,
+        #     opt=cfg.optim.name,
+        #     use_amp=cfg.optim.use_amp,
+        #     clip=cfg.optim.clip,
+        # )
+        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
         criterion = nn.CrossEntropyLoss()
         earlystopping = EarlyStopping(
             patience=cfg.train.patience,
@@ -231,15 +235,23 @@ def main(cfg: DictConfig):
         for step in tqdm(range(GRAD_STEPS)):
             # train
             model.train()
+            if cfg.model.name in ["redfb", "preredfb"]:
+                model.init_states()
 
             inputs, labels = sampler.sample_batch(cfg.data.batch_size)
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
             loss = criterion(outputs.transpose(1, 2), labels)  # (B, T, C)->(B, C, T)
-            optimiezer(loss)
             train_acc = accuracy_rc(outputs, labels)
             sum_train_loss += loss.item()
             sum_train_acc += train_acc.item()
+            optimizer.zero_grad()
+            loss.backward()
+            if cfg.optim.clip is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=cfg.optim.clip, norm_type=2
+                )
+            optimizer.step()
 
             itr += 1
 

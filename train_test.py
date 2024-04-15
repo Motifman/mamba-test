@@ -13,7 +13,6 @@ from task import (
     make_selectivecopy_dataset,
     make_statetransition_dataset,
     make_copy_dataset,
-    output_size_of_task,
 )
 from utils import (
     make_datasets,
@@ -28,23 +27,6 @@ from utils import (
 from model import make_model
 import matplotlib.pyplot as plt
 import os
-
-
-def plot_metrics(metrics, path1, path2):
-    fig1 = plt.figure()
-    plt.plot(metrics["step"], metrics["train_loss"], label="train_loss")
-    plt.plot(metrics["step"], metrics["eval_loss"], label="eval_loss")
-    plt.xlabel("step")
-    plt.ylabel("loss")
-    plt.savefig(path1)
-
-    fig2 = plt.figure()
-    plt.plot(metrics["step"], metrics["train_acc"], label="train_acc")
-    plt.plot(metrics["step"], metrics["eval_acc"], label="eval_acc")
-    plt.xlabel("step")
-    plt.ylabel("accuracy")
-    plt.savefig(path2)
-    return fig1, fig2
 
 
 def make_datatensor(task_name, n_train, n_eval, T, block_T, len_sequence, vocab_size):
@@ -83,32 +65,10 @@ def make_datatensor(task_name, n_train, n_eval, T, block_T, len_sequence, vocab_
     return x_train_tensor, y_train_tensor, x_eval_tensor, y_eval_tensor
 
 
-def evaluate_best_model(model, train_loader, eval_loader, criterion, device, accuracy):
-    sum_train_loss = 0
-    sum_train_acc = 0
-    sum_eval_loss = 0
-    sum_eval_acc = 0
-    len_train = len(train_loader)
-    len_eval = len(eval_loader)
-
-    for inputs, labels in tqdm(train_loader):
-        inputs, labels = inputs.to(device), labels.to(device)
-        outputs = model(inputs)
-        sum_train_loss += criterion(outputs.transpose(2, 1), labels)
-        sum_train_acc += accuracy(outputs, labels)
-
-    for inputs, labels in tqdm(eval_loader):
-        inputs, labels = inputs.to(device), labels.to(device)
-        outputs = model(inputs)
-        sum_eval_loss += criterion(outputs.transpose(2, 1), labels)
-        sum_eval_acc += accuracy(outputs, labels)
-
-    return (
-        sum_train_loss / len_train,
-        sum_train_acc / len_train,
-        sum_eval_loss / len_eval,
-        sum_eval_acc / len_eval,
-    )
+def copy_accuracy(outputs, labels):
+    pred = torch.max(outputs, dim=2)[1]  # argmax
+    acc_seq = pred[:, -10:] == labels[:, -10:]
+    return torch.mean(torch.sum(acc_seq, dim=1).cpu() / 10)
 
 
 @hydra.main(config_name="config.yaml")
@@ -169,8 +129,6 @@ def main(cfg: DictConfig):
         eval_sets = make_datasets(x_eval_tensor, y_eval_tensor)
         train_loader = make_dataloader(train_sets, cfg.data.batch_size, shuffle=True)
         eval_loader = make_dataloader(eval_sets, cfg.data.batch_size, shuffle=False)
-        train_loader_iterator = iter(train_loader)
-        eval_loader_iterator = iter(eval_loader)
 
         # model, optimiezer, criterion, EarlyStopping
         set_seed(cfg.seed.train)
@@ -179,30 +137,23 @@ def main(cfg: DictConfig):
             cfg.model.input_size,
             cfg.model.d_model,
             cfg.model.n_layers,
-            output_size_of_task(cfg.task.name, cfg.task.vocab_size),
+            cfg.task.vocab_size - 1,
             cfg.model.parallel,
             cfg.model.activation,
         ).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
         script_dir = os.path.dirname(os.path.realpath(__file__))
-        if cfg.checkpoint_model is not None:
-            print("loading pretrained model..")
-            path = script_dir + f"/{cfg.log_dir}/{cfg.checkpoint_model}"
-            model.load_state_dict(torch.load(path))
-
+        # if cfg.checkpoint_model is not None:
+        #     print("loading pretrained model...")
+        #     path = script_dir + f"/{cfg.log_dir}/{cfg.checkpoint_model}"
+        #     model.load_state_dict(torch.load(path))
+        #
         if cfg.param_count_only:
             n_param = num_params(model.parameters())
             print(f"paramters = {n_param}")
             mlflow.log_param("n_parameter", n_param)
             quit()
 
-        optimizer = Optimizer(
-            model.parameters(),
-            cfg.optim.lr,
-            eps=cfg.optim.eps,
-            opt=cfg.optim.name,
-            use_amp=cfg.optim.use_amp,
-            clip=cfg.optim.clip,
-        )
         criterion = nn.CrossEntropyLoss()
         earlystopping = EarlyStopping(
             patience=cfg.train.patience,
@@ -235,111 +186,71 @@ def main(cfg: DictConfig):
             quit()
 
         # train loop
-        sum_train_loss = 0
-        sum_train_acc = 0
-        sum_eval_loss = 0
-        sum_eval_acc = 0
-        GRAD_STEPS = cfg.train.grad_steps
-        LOG_INTERVAL = cfg.train.log_interval
-        itr = 0
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
-        for step in tqdm(range(GRAD_STEPS)):
+        EPOCH = 150
+        for epoch in tqdm(range(EPOCH)):
+            sum_train_loss = 0
+            sum_train_acc = 0
+            sum_train_acc_test = 0
             # train
             model.train()
-            if cfg.model.name in ["redfb", "preredfb"]:
+            for inputs, labels in train_loader:
                 model.init_states()
-            try:
-                inputs, labels = next(train_loader_iterator)
-            except StopIteration:
-                train_loader_iterator = iter(train_loader)
-                inputs, labels = next(train_loader_iterator)
-
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            loss = criterion(outputs.transpose(1, 2), labels)  # (B, T, C)->(B, C, T)
-            # optimizer(loss)
-            train_acc = accuracy_rc(outputs, labels)
-            sum_train_loss += loss.item()
-            sum_train_acc += train_acc.item()
-            optimizer.zero_grad()
-            loss.backward()
-            if cfg.optim.clip is not None:
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), max_norm=cfg.optim.clip, norm_type=2
-                )
-            optimizer.step()
-
-            # eval
-            model.eval()
-            with torch.no_grad():
-                try:
-                    inputs, labels = next(eval_loader_iterator)
-                except StopIteration:
-                    eval_loader_iterator = iter(eval_loader)
-                    inputs, labels = next(eval_loader_iterator)
-
                 inputs, labels = inputs.to(device), labels.to(device)
                 outputs = model(inputs)
-                loss = criterion(outputs.transpose(1, 2), labels)
-                eval_acc = accuracy_rc(outputs, labels)
-                sum_eval_loss += loss.item()
-                sum_eval_acc += eval_acc.item()
+                loss = criterion(
+                    outputs.transpose(1, 2), labels
+                )  # (B, T, C)->(B, C, T)
+                # optimizer(loss)
+                train_acc = accuracy_rc(outputs, labels)
+                sum_train_loss += loss.item()
+                sum_train_acc += train_acc.item()
+                sum_train_acc_test += copy_accuracy(outputs, labels).item()
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=10, norm_type=2
+                )
+                optimizer.step()
 
-            itr += 1
+            train_loss = sum_train_loss / len(train_loader)
+            train_acc = sum_train_acc / len(train_loader)
+            train_acc_test = sum_train_acc_test / len(train_loader)
 
-            if step % LOG_INTERVAL == 0:
-                # metrics
-                train_loss = sum_train_loss / itr
-                train_acc = sum_train_acc / itr
-                eval_loss = sum_eval_loss / itr
-                eval_acc = sum_eval_acc / itr
+            print(f"Epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}")
+            print(f"accuracy_test={train_acc_test}")
 
-                print(f"train_loss={train_loss}, train_acc={train_acc}")
-                print(f"eval_loss={eval_loss}, eval_acc={eval_acc}")
-                sum_train_loss = 0
-                sum_train_acc = 0
-                sum_eval_loss = 0
-                sum_eval_acc = 0
+            metrics["step"].append(epoch)
+            metrics["train_loss"].append(train_loss)
+            metrics["train_acc"].append(train_acc)
 
-                metrics["step"].append(step)
-                metrics["train_loss"].append(train_loss)
-                metrics["train_acc"].append(train_acc)
-                metrics["eval_loss"].append(eval_loss)
-                metrics["eval_acc"].append(eval_acc)
+            mlflow.log_metric("train_loss", train_loss, step=epoch)
+            mlflow.log_metric("train_acc", train_acc, step=epoch)
 
-                mlflow.log_metric("train_loss", train_loss, step=step)
-                mlflow.log_metric("train_acc", train_acc, step=step)
-                mlflow.log_metric("eval_loss", eval_loss, step=step)
-                mlflow.log_metric("eval_acc", eval_acc, step=step)
-
-                earlystopping(eval_loss, model=model)
-                if earlystopping.early_stop:
-                    print(
-                        f"Early Stopping! best eval loss is {earlystopping.best_score}"
-                    )
-                    mlflow.log_metric("stop epoch", step)
-                    break
-                itr = 0
+            earlystopping(train_loss, model=model)
+            if earlystopping.early_stop:
+                print(f"Early Stopping! best eval loss is {earlystopping.best_score}")
+                mlflow.log_metric("stop epoch", epoch)
+                break
 
         # log
-        path1 = script_dir + f"/{cfg.log_dir}/loss.pdf"
-        path2 = script_dir + f"/{cfg.log_dir}/acc.pdf"
-        fig1, fig2 = plot_metrics(metrics, path1, path2)
-        mlflow.log_figure(fig1, "loss.pdf")
-        mlflow.log_figure(fig2, "acc.pdf")
+        # path1 = script_dir + f"/{cfg.log_dir}/loss.pdf"
+        # path2 = script_dir + f"/{cfg.log_dir}/acc.pdf"
+        # fig1, fig2 = plot_metrics(metrics, path1, path2)
+        # mlflow.log_figure(fig1, "loss.pdf")
+        # mlflow.log_figure(fig2, "acc.pdf")
 
         # evaluate the best model
-        with torch.no_grad():
-            train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
-                model, train_loader, eval_loader, criterion, device, accuracy_rc
-            )
-        print("evaluate best model")
-        print(f"best_train_loss={train_loss}, best_train_acc={train_acc}")
-        print(f"best_eval_loss={eval_loss}, best_eval_acc={eval_acc}")
-        mlflow.log_metric("best_train_loss", train_loss)
-        mlflow.log_metric("best_train_acc", train_acc)
-        mlflow.log_metric("best_eval_loss", eval_loss)
-        mlflow.log_metric("best_eval_acc", eval_acc)
+        # with torch.no_grad():
+        #     train_loss, train_acc, eval_loss, eval_acc = evaluate_best_model(
+        #         model, train_loader, eval_loader, criterion, device, accuracy_rc
+        #     )
+        # print("evaluate best model")
+        # print(f"best_train_loss={train_loss}, best_train_acc={train_acc}")
+        # print(f"best_eval_loss={eval_loss}, best_eval_acc={eval_acc}")
+        # mlflow.log_metric("best_train_loss", train_loss)
+        # mlflow.log_metric("best_train_acc", train_acc)
+        # mlflow.log_metric("best_eval_loss", eval_loss)
+        # mlflow.log_metric("best_eval_acc", eval_acc)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from mamba_py.mamba import MambaConfig, Mamba
 import torch.nn as nn
+import torch.nn.functional as F
 from mem import AttentionRedFB, AttnNoNormLMSTM
 
 
@@ -36,11 +37,13 @@ class TransformerClassification(nn.Module):
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder, num_layers=n_layers)
+        self.class_hid = nn.Linear(d_model, d_model)
         self.class_head = nn.Linear(d_model, num_classes)
 
     def forward(self, x):
         x = self.in_head(x)
         x = self.transformer(x)
+        x = F.relu(self.class_hid(x))
         y = self.class_head(x)
         return y
 
@@ -52,6 +55,7 @@ def make_model(
     n_layers: int,
     num_classes: int,
     parallel: bool,
+    activation: str,
 ):
     if model_name == "mamba":
         model = MambaClassification(input_size, d_model, n_layers, num_classes)
@@ -64,11 +68,11 @@ def make_model(
             num_classes,
             num_rnn=6,
             num_heads=4,
-            nonlinear="relu",
+            nonlinear=activation,
             parallel=parallel,
         )
     elif model_name == "preredfb":
-        model = AttnNoNormLMSTM(input_size, d_model, num_classes, 6, 4, "relu")
+        model = AttnNoNormLMSTM(input_size, d_model, num_classes, 6, 4, activation)
     else:
         raise ValueError("select mamba or transformer")
     return model

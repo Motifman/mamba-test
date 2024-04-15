@@ -6,6 +6,7 @@ model:
   d_model: 64
   n_layers: 2
   parallel: true
+  activation: relu
 
 task:
   name: randomcopy
@@ -32,8 +33,8 @@ optim:
   clip: null
 
 seed:
-  data: 1234
-  train: 9999
+  data: 99999
+  train: 123
 
 device_id: cuda:1
 

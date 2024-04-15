@@ -69,12 +69,6 @@ class FeedForward(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Linear(hidden_size * 4, hidden_size),
             ]
-        elif nonlinear == "silu":
-            layers = [
-                nn.Linear(hidden_size, hidden_size * 4),
-                nn.SiLU(inplace=True),
-                nn.Linear(hidden_size * 4, hidden_size),
-            ]
         else:
             raise ValueError("invalid nonlinear!!")
         self.net = nn.Sequential(*layers)
