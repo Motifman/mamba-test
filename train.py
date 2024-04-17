@@ -195,14 +195,14 @@ def main(cfg: DictConfig):
             mlflow.log_param("n_parameter", n_param)
             quit()
 
-        optimizer = Optimizer(
-            model.parameters(),
-            cfg.optim.lr,
-            eps=cfg.optim.eps,
-            opt=cfg.optim.name,
-            use_amp=cfg.optim.use_amp,
-            clip=cfg.optim.clip,
-        )
+        # optimizer = Optimizer(
+        #     model.parameters(),
+        #     cfg.optim.lr,
+        #     eps=cfg.optim.eps,
+        #     opt=cfg.optim.name,
+        #     use_amp=cfg.optim.use_amp,
+        #     clip=cfg.optim.clip,
+        # )
         criterion = nn.CrossEntropyLoss()
         earlystopping = EarlyStopping(
             patience=cfg.train.patience,
@@ -242,7 +242,15 @@ def main(cfg: DictConfig):
         GRAD_STEPS = cfg.train.grad_steps
         LOG_INTERVAL = cfg.train.log_interval
         itr = 0
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
+        if cfg.optim.name == "adam":
+            optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
+        elif cfg.optim.name == "adamw":
+            optimizer = torch.optim.AdamW(
+                model.parameters(), lr=cfg.optim.lr, betas=(0.9, 0.95), weight_decay=0.1
+            )
+        else:
+            raise NotImplementedError()
+
         for step in tqdm(range(GRAD_STEPS)):
             # train
             model.train()

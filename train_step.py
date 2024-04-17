@@ -197,7 +197,14 @@ def main(cfg: DictConfig):
         #     use_amp=cfg.optim.use_amp,
         #     clip=cfg.optim.clip,
         # )
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
+        if cfg.optim.name == "adam":
+            optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr)
+        elif cfg.optim.name == "adamw":
+            optimizer = torch.optim.AdamW(
+                model.parameters(), lr=cfg.optim.lr, betas=(0.9, 0.95), weight_decay=0.1
+            )
+        else:
+            raise NotImplementedError()
         criterion = nn.CrossEntropyLoss()
         earlystopping = EarlyStopping(
             patience=cfg.train.patience,
